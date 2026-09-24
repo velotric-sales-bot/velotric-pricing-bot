@@ -155,23 +155,28 @@ async function handleMessage(event) {
   }
 }
 
+function sendJson(res, statusCode, obj) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify(obj));
+}
+
 module.exports = async (req, res) => {
   const body = req.body || {};
-  
-  // Challenge verification
+
   if (body.challenge) {
-    return res.json({ challenge: body.challenge });
+    sendJson(res, 200, { challenge: body.challenge });
+    return;
   }
-  
-  // Handle message event
+
   const header = body.header || {};
   const eventType = header.event_type || '';
-  
+
   if (eventType === 'im.message.receive_v1') {
-    res.json({ code: 0, msg: 'ok' });
+    sendJson(res, 200, { code: 0, msg: 'ok' });
     handleMessage(body.event || {}).catch(err => console.error('Error:', err));
     return;
   }
-  
-  res.json({ code: 0, msg: 'ok' });
+
+  sendJson(res, 200, { code: 0, msg: 'ok' });
 };
