@@ -1,5 +1,5 @@
 """
-Velotric Pricing Bot - Feishu IM Bot Backend (Vercel Serverless)
+Velotric Pricing Bot - Vercel Serverless Python
 """
 
 import os
@@ -10,9 +10,6 @@ import re
 from typing import List, Dict, Any
 
 import httpx
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
-from mangum import Mangum
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -22,8 +19,6 @@ FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
 BITABLE_APP_TOKEN = os.getenv("BITABLE_APP_TOKEN", "JlEubHXWOaqG1psiDGxcv2cFnGc")
 BITABLE_TABLE_ID = os.getenv("BITABLE_TABLE_ID", "tblowThhfqq3b9gL")
 FEISHU_BASE_URL = "https://open.feishu.cn/open-apis"
-
-app = FastAPI(title="Velotric Pricing Bot")
 
 _token_cache = {"token": None, "expire_time": 0}
 
@@ -41,7 +36,7 @@ def get_tenant_access_token() -> str:
     data = resp.json()
     if data.get("code") != 0:
         logger.error(f"Failed to get tenant token: {data}")
-        raise HTTPException(status_code=500, detail="Failed to get tenant token")
+        raise Exception(f"Failed to get tenant token: {data}")
     
     _token_cache["token"] = data["tenant_access_token"]
     _token_cache["expire_time"] = now + data.get("expire", 7200)
@@ -112,7 +107,6 @@ def search_bitable_resources(keyword: str) -> List[Dict[str, Any]]:
                 "description": fields.get("Description", ""),
                 "source": fields.get("Source", ""),
                 "resource_url": fields.get("Resource URL", ""),
-                "resource_pic": fields.get("Resource Pic", []),
             })
     
     logger.info(f"Keyword '{keyword}' matched {len(matched)} resources")
@@ -188,7 +182,7 @@ def send_post_message(chat_id: str, title: str, description: str,
     return True
 
 
-def handle_message_sync(event: Dict[str, Any]) -> None:
+def handle_message(event: Dict[str, Any]) -> None:
     message = event.get("message", {})
     chat_id = message.get("chat_id")
     msg_type = message.get("message_type")
@@ -235,4 +229,98 @@ def handle_message_sync(event: Dict[str, Any]) -> None:
             "  • shipping policy / shipping cost",
             "  • new dealer / dealer incentive",
             "  • POSM / marketing",
-            "
+            "  • dealer onboarding",
+        ])
+        send_text_message(
+            chat_id,
+            f"🤔 No matching resource found for \"{text}\".\n\n"
+            f"Try one of these keywords:\n{hints}\n\n"
+            f"Or check the full knowledge base in the 知识库管理系统 Bitable."
+        )
+        return
+    
+    if len(resources) == 1:
+        r = resources[0]
+        send_post_message(
+            chat_id,
+            title=r["title"],
+            description=r.get("description", ""),
+            resource_url=r.get("resource_url", ""),
+            source=r.get("source", ""),
+        )
+    else:
+        result_text = f"📋 Found {len(resources)} resources:\n\n"
+        for i, r in enumerate(resources, 1):
+            result_text += f"{i}. {r['title']}"
+            if r.get("resource_url"):
+                result_text += f"\n   {r['resource_url']}"
+            result_text += "\n\n"
+        result_text += "Reply with the number for more details."
+        send_text_message(chat_id, result_text)
+
+
+def handler(request, context):
+    """Vercel Python serverless function handler"""
+    try:
+        method = request.method
+        path = request.path
+        
+        body = {}
+        if method in ("POST", "PUT"):
+            try:
+                body = request.json()
+            except Exception:
+                body = {}
+        
+        # Challenge verification
+        if "challenge" in body:
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"challenge": body["challenge"]})
+            }
+        
+        # Health check
+        if path == "/health":
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"status": "ok", "bot": "Velotric Pricing Bot"})
+            }
+        
+        # Root
+        if path == "/":
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"name": "Velotric Pricing Bot", "status": "running"})
+            }
+        
+        # Webhook
+        if path.endswith("/webhook") and method == "POST":
+            header = body.get("header", {})
+            event_type = header.get("event_type", "")
+            
+            if event_type == "im.message.receive_v1":
+                event = body.get("event", {})
+                handle_message(event)
+            
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"code": 0, "msg": "ok"})
+            }
+        
+        return {
+            "statusCode": 404,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": "Not found"})
+        }
+        
+    except Exception as e:
+        logger.error(f"Handler error: {e}", exc_info=True)
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"error": str(e)})
+        }
